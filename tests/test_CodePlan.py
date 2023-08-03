@@ -1,4 +1,4 @@
-#Version 8/1/23
+#Version 8/3/23
 """
 These commands are helpful for avoiding typing
 python -m pytest test_CodePlan.py -v -s
@@ -37,21 +37,68 @@ def cls1(file1):
 def cls2(file2):
     return VBAToCodePlan(file2)
 
-def test_parse_args(cls1):
+@pytest.fixture
+def sep():
+    #line break separator for df_plan values
+    return ",\n"
+
+def test_create_df_plan_args_col(cls1, sep):
     """
-    Parse the args_temp df column
+    Create the arg column in df_plan by parsing the args_temp column
+    JDL 8/3/23
     """
     cls1.read_vba_code_file()
     cls1.init_df_code()
-    cls2.combine_split_lines()
+    cls1.combine_split_lines()
     cls1.set_filters()
     cls1.parse_start_lines()
+    cls1.create_df_plan_args_col()
 
-    cls1.parse_args()
-    assert cls1.df_plan.shape == (3,5)  #3 routines, 5 columns with "args" added
-    s = ""
-    assert cls1.loc[0, "args"] == s
+    assert cls1.df_plan.shape == (3, 4)
 
+    lst_expected = ["cls|Variant|ByRef" + sep + "arg1|Variant|ByVal" + sep +
+                    "arg2|Variant|ByRef|Optional",
+                    "cls|Variant|ByRef" + sep + "arg1|Variant|ByRef",
+                    "cls|Variant|ByRef" + sep + "i|Integer|ByRef" + sep + 
+                    "j|Integer|ByRef" + sep + "arg2|Variant|ByRef"]
+    for idx, s in enumerate(cls1.df_plan["arguments"]):
+        assert s == lst_expected[idx]
+
+    output_file = "df_plan.xlsx"
+    cls1.df_plan.to_excel(output_file, index=False)
+    
+
+def test_parse_arglist(cls1, sep):
+    """
+    Parse a VBA arglist string (read from df_plan args_temp row/column
+    JDL 8/3/23
+    """
+    s1 = "arg1 As Integer"
+    s1_expected = "arg1|Integer|ByRef"
+    assert cls1.parse_arglist(s1) == s1_expected
+
+    s2 = "arg2"
+    s2_expected = "arg2|Variant|ByRef"
+    assert cls1.parse_arglist(s2) == s2_expected
+
+    s3 = "ByRef arg3"
+    s3_expected = "arg3|Variant|ByRef"
+    assert cls1.parse_arglist(s3) == s3_expected
+
+    s4 = "Optional ByVal arg4"
+    s4_expected = "arg4|Variant|ByVal|Optional"
+    assert cls1.parse_arglist(s4) == s4_expected
+
+    s5 = "Optional ByVal arg5 As Integer"
+    s5_expected = "arg5|Integer|ByVal|Optional"
+    assert cls1.parse_arglist(s5) == s5_expected
+
+    #Parse compound arglist
+    s = "arg1 As Integer, arg2, ByRef arg3, Optional ByVal arg4, " \
+        + "Optional ByVal arg5 As Integer"
+    s_expected = s1_expected + sep + s2_expected + sep + \
+        s3_expected + sep + s4_expected + sep + s5_expected    
+    assert cls1.parse_arglist(s) == s_expected
 
 def test_parse_start_lines(cls1):
     """
@@ -59,10 +106,9 @@ def test_parse_start_lines(cls1):
     """
     cls1.read_vba_code_file()
     cls1.init_df_code()
-    cls2.combine_split_lines()
+    cls1.combine_split_lines()
     cls1.set_filters()
     cls1.parse_start_lines()
-    #print('\n\n', cls1.df_plan, '\n\n')
 
     assert cls1.df_plan.shape == (3,4)  #3 routines, 4 columns
 
@@ -78,7 +124,7 @@ def test_parse_start_lines(cls1):
 
     assert cls1.df_plan.loc[2,"routine_name"] == "Method2"
     assert cls1.df_plan.loc[2,"type"] == "Variant"
-    assert cls1.df_plan.loc[2,"args_temp"] == "cls, i, j, arg2"
+    assert cls1.df_plan.loc[2,"args_temp"] == "cls, i As Integer, j As Integer, arg2"
     assert cls1.df_plan.loc[2,"line_num_start"] == 45
 
 def test_parse_startline(cls1):
@@ -111,7 +157,7 @@ def check_parse_startline_results(tup_results, name, args, type, is_fn, is_sub):
 def test_set_filters(cls1):
     cls1.read_vba_code_file()
     cls1.init_df_code()
-    cls2.combine_split_lines()
+    cls1.combine_split_lines()
     cls1.set_filters()
 
     assert list(cls1.df_code[cls1.fil_starts].index) == [10, 30, 44]
