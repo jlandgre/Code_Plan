@@ -29,9 +29,9 @@ End Function
 ' JDL 8/1/23
 '
 Function Method1(cls, arg1) As Boolean
-
     SetErrorHandle Method1: If errs.IsHandle Then On Error GoTo ErrorExit
-    
+    Dim cht As New Chart
+    Dim tbl As New tblRowsCols
     Exit Function
     
 ErrorExit:
@@ -45,7 +45,7 @@ End Function
 Function Method2(cls, i As Integer, j As Integer, arg2)
 
     SetErrorHandle Method2: If errs.IsHandle Then On Error GoTo ErrorExit
-    Dim R As Variant, R_MI As Object
+    Dim rng As Variant, tbl As Object
     
     i = 2 + 3
     j = 6

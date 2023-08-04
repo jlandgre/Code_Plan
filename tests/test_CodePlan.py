@@ -1,6 +1,5 @@
 #Version 8/3/23
 """
-These commands are helpful for avoiding typing
 python -m pytest test_CodePlan.py -v -s
 
 #2345678901234567890123456789012345678901234567890123456789012345678901234567890
@@ -42,7 +41,99 @@ def sep():
     #line break separator for df_plan values
     return ",\n"
 
-def test_create_docstring_df(cls1):
+def test_CreateCodePlanProcedure(cls1):
+    """
+    Run the full procedure and write df_plan to Excel
+
+    JDL 8/4/23
+    """
+    cls1.CreateCodePlanProcedure()
+    cls1.df_plan.to_excel("df_plan.xlsx", index=False)
+    print('\n\n', cls1.df_plan)
+
+def test_add_plan_internal_vars_col(cls1):
+    """
+    Merge internal_vars column from df_lookup into df_plan
+
+    JDL 8/4/23
+    """
+    cls1.read_vba_code_file()
+    cls1.init_df_code()
+    cls1.combine_split_lines()
+    cls1.set_filters()
+    cls1.parse_start_lines()
+
+    #Parse internal variables into lookup table and merge into df_plan
+    cls1.create_internal_vars_df()
+    cls1.add_plan_internal_vars_col()
+
+    #Check the lookup table
+    lst_expected = ["i|Integer,\nj|Integer",
+                    "cht|Chart|New,\ntbl|tblRowsCols|New",
+                    "rng|Variant,\ntbl|Object"]
+    
+    for i, val in zip(range(0,3), cls1.df_plan["vars_internal"]):
+        assert val == lst_expected[i]
+
+def test_create_internal_vars_df(cls1):
+    """
+    Locate VBA Dim rows and extract/parse variables into a lookup table
+    indexed by function/sub first line index
+    
+    JDL 8/3/23
+    """
+    cls1.read_vba_code_file()
+    cls1.init_df_code()
+    cls1.combine_split_lines()
+    cls1.set_filters()
+    cls1.parse_start_lines()
+
+    #Parse internal variables into lookup table
+    cls1.create_internal_vars_df()
+
+    #Check the lookup table
+    assert list(cls1.df_lookup.index) == [10, 30, 44]
+    lst_expected = ["i|Integer,\nj|Integer",
+                    "cht|Chart|New,\ntbl|tblRowsCols|New",
+                    "rng|Variant,\ntbl|Object"]
+    
+    for i, val in zip(range(0,3), cls1.df_lookup["vars_internal"]):
+        assert val == lst_expected[i]
+    
+def test_parse_dim_statement(cls1):
+    """
+    Helper function to parse VBA Dim statement into a list of strings
+    for each variable declared in the Dim statement
+
+    JDL 8/4/23
+    """
+    s = "Dim var1 As Integer, var2 As New tbl"
+    s_parsed = cls1.parse_dim_statement(s)
+    assert s_parsed == ["var1|Integer", "var2|tbl|New"]
+
+def test_add_plan_docstring_col(cls1):
+    """
+    Merge docstring column from df_lookup into df_plan
+
+    JDL 8/4/23
+    """
+    cls1.read_vba_code_file()
+    cls1.init_df_code()
+    cls1.combine_split_lines()
+    cls1.set_filters()
+    cls1.parse_start_lines()
+    cls1.create_df_plan_args_col()
+    cls1.create_docstrings_df()
+    cls1.add_plan_docstring_col()
+
+    assert cls1.df_plan.shape == (3, 5)
+    lst_expected = ["A docstring for a procedure",
+                    "Method1 docstring is\nmultiline",
+                    "Method2 docstring"]
+    for i, row in cls1.df_plan.iterrows():
+        assert row["docstring"] == lst_expected[i]
+
+def test_create_docstrings_df(cls1):
     """
     Locate docstring rows between function/sub start rows and previous
     function/sub end row
@@ -55,15 +146,15 @@ def test_create_docstring_df(cls1):
     cls1.set_filters()
     cls1.parse_start_lines()
     cls1.create_df_plan_args_col()
-    cls1.create_docstring_df()
+    cls1.create_docstrings_df()
 
-    cls1.add_plan_docstring_col()
-    print("\n\n", cls1.df_plan, "\n\n")
-
-    cls1.df_plan.to_excel("df_plan.xlsx", index=False)
-
-    #xxx stop 8/3/23 22:15 - need separate test for add_plan_docstring_col
-
+    assert cls1.df_lookup.shape == (3, 2)
+    assert list(cls1.df_lookup.index) == [10, 30, 44]
+    lst_expected = ["A docstring for a procedure",
+                    "Method1 docstring is\nmultiline",
+                    "Method2 docstring"]
+    for i, s in zip(cls1.df_lookup.index, lst_expected):
+        assert cls1.df_lookup.loc[i, "docstring"] == s
 
 def test_create_df_plan_args_col(cls1, sep):
     """
@@ -193,10 +284,10 @@ def test_combine_split_lines(cls2):
     assert cls2.df_code.index.size == 20
 
     s = "If Not .Method1(cls, arg1) Then GoTo ErrorExit"
-    assert cls2.df_code.loc[12, 'stripped_code'] == s
+    assert cls2.df_code.loc[12, "stripped_code"] == s
 
     s = "errs.RecordErr errs, \"ExampleProcedure\", ExampleProcedure"
-    assert cls2.df_code.loc[18, 'stripped_code'] == s
+    assert cls2.df_code.loc[18, "stripped_code"] == s
 
 def test_init_df_code(cls1):
     cls1.read_vba_code_file()

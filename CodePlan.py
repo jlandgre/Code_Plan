@@ -10,15 +10,16 @@ class VBAToCodePlan:
         # VBA code as a string and DataFrame
         self.vba_code = ""
         self.df_code = None
-        self.df_docstrings = None # docstring lookup table row subset of df_code
+        self.df_lookup = None # docstring lookup table row subset of df_code
 
         # df_code filters
         self.fil_starts = None
         self.fil_ends = None
         self.fil_docstrings = None
 
-        # VBA Sub/Function first line Regular Expression pattern
+        # VBA Sub/Function first line and Dim statement Regular Expression patterns
         self.line1_pattern = r"(Function|Sub)\s+(\w+)\((.*?)\)(?:\s+As\s+(\w+))?"
+        self.dim_pattern = r"(\w+)\s(?:As\s)(New\s)?(\w+)(?:,\s*|$)"
 
         # Code plan
         self.df_plan = None
@@ -37,7 +38,11 @@ class VBAToCodePlan:
         self.set_filters()
         self.parse_start_lines()
         self.create_df_plan_args_col()
-        self.parse_docstrings()
+        self.create_docstrings_df()
+        self.add_plan_docstring_col()
+        self.create_internal_vars_df()
+        self.add_plan_internal_vars_col()
+
 
     def read_vba_code_file(self):
         """
@@ -97,17 +102,17 @@ class VBAToCodePlan:
 
         JDL 8/1/2023
         """
-        self.fil_starts = self.df_code["stripped_code"].str.startswith("Function")
-        self.fil_starts = self.fil_starts | \
-            self.df_code["stripped_code"].str.startswith("Sub")
+        #First and last lines in function or sub
+        col = "stripped_code"
+        self.fil_starts = self.df_code[col].str.startswith("Function")
+        self.fil_starts = self.fil_starts | self.df_code[col].str.startswith("Sub")
+        self.fil_ends = self.df_code[col].str.startswith("End Function")
+        self.fil_ends = self.fil_ends | self.df_code[col].str.startswith("End Sub")
         
-        self.fil_ends = self.df_code["stripped_code"].str.startswith("End Function")
-        self.fil_ends = self.fil_ends | \
-            self.df_code["stripped_code"].str.startswith("End Sub")
-        
-        self.fil_bounds = self.df_code["stripped_code"].str.startswith("\'------")
+        # Comment fence boundaries and rows with VBA dim statements
+        self.fil_bounds = self.df_code[col].str.startswith("\'------")
+        self.fil_dims = self.df_code[col].str.startswith("Dim ")
 
-        
     def parse_start_lines(self):
         """
         Parse the sub and function start lines
@@ -220,40 +225,131 @@ class VBAToCodePlan:
             lst_arg_code_plan.append(arg_code_plan)
         return ",\n".join(lst_arg_code_plan)
 
-    def create_docstring_df(self):
+    def create_docstrings_df(self):
         """
         Locate docstring rows between function/sub start rows and previous
         function/sub end row
         
         JDL 8/3/23
         """
-        #Set previous end index for functions
+        # Combined filter for starts, ends and comment fence boundaries
         fil = self.fil_starts | self.fil_ends | self.fil_bounds
 
-        # Modify a copy/subset of df_code
+        # Modify a copy/subset of df_code to use as a lookup table
         df_docstr = self.df_code.copy()
         ser_idx_shift = df_docstr.loc[fil].index.to_series().shift(1, fill_value=0)
         df_docstr.loc[fil, "prev_end_idx"] = ser_idx_shift
-                
-        
-        # Parse docstrings for functions; +1 for first row after end except for idx_prev at file begin
+
+        # Parse docstrings for functions
         for idx in df_docstr[self.fil_starts].index:
             idx_prev = int(df_docstr.loc[idx, "prev_end_idx"])
-            if (idx_prev > 0) | (idx_prev in df_docstr[self.fil_bounds].index): idx_prev +=1
 
-            #combine lines in block between previous end and function starts
-            docstring = " \n".join(df_docstr.loc[list(range(idx_prev, idx)), "stripped_code"]) 
-            df_docstr.loc[idx, "docstring_temp"] = docstring
-        
-        # Set Class attribute
-        self.df_docstrings =  df_docstr[self.fil_starts]
+            #idx_prev +1 for first row after end except file begin or if boundary row
+            if (idx_prev > 0) or (idx_prev in df_docstr[self.fil_bounds].index):
+                idx_prev +=1
+
+            # Combine lines in block between previous end and function starts
+            docstring = "\n".join(self.create_lst_lines(idx, idx_prev))
+            df_docstr.loc[idx, "docstring"] = docstring
+
+        # Set Class attribute and subset cols
+        self.df_lookup =  df_docstr[self.fil_starts]
+        self.df_lookup = self.df_lookup[ ["prev_end_idx", "docstring"]]
+
+    def create_lst_lines(self, idx, idx_prev):
+        """
+        Helper function to create list of cleaned up lines in a docstring block
+        (omits lines after encountering VBA blank line or blank comment line so
+        won't include Created/Modified Date row etc.)
+
+        JDL 8/4/23
+        """
+        docstring_lines = []
+        for i in range(idx_prev, idx):
+            line = self.df_code.loc[i, "stripped_code"]
+
+            # Strip single quote (VBA comment character) and leading whitespace
+            if line.startswith("'") and not line.strip() == "'":
+                docstring_lines.append(line[1:].strip())
+            
+            #Stop if the line is blank or only a single quote + whitespace
+            elif line.strip() == "'" or line.strip() == "":
+                break
+        return docstring_lines
 
     def add_plan_docstring_col(self):
         """
-        Merge docstring column from df_docstrings to df_plan
+        Merge docstring column from df_lookup into df_plan
 
         JDL 8/3/23
         """
-        self.df_plan = self.df_plan.merge(self.df_docstrings[["docstring_temp"]], 
+        self.df_plan = self.df_plan.merge(self.df_lookup[["docstring"]], 
                                           left_on="idx_start", right_index=True)
-        self.df_plan.rename(columns={"docstring_temp": "docstring"}, inplace=True)
+
+    def create_internal_vars_df(self):
+        """
+        Extract/parse VBA variables from Dim statement rows into a lookup table
+        indexed by function/sub first line index
+        
+        JDL 8/3/23
+        """
+        df_lookup = self.df_code.copy()
+        
+        #Populate rows with index of their function/sub's first line
+        df_lookup.loc[self.fil_starts, "idx_start"] = \
+                df_lookup[self.fil_starts].index.values
+        df_lookup["idx_start"].ffill(inplace=True)
+        
+        #Initialize column for internal variable strings
+        df_lookup["vars_internal"] = [[] for _ in range(len(df_lookup))]
+        
+        # Parse VBA Dim statements
+        for idx in df_lookup[self.fil_dims].index:
+            idx_start = int(df_lookup.loc[idx, "idx_start"])
+            lst_parsed_dims = self.parse_dim_statement(df_lookup.loc[idx, "stripped_code"])
+                    
+            #Append Dim statement list onto previous from other Dims in this function/sub
+            df_lookup.at[idx_start, "vars_internal"] = \
+                df_lookup.loc[idx_start, "vars_internal"] + lst_parsed_dims
+        
+        #Subset to just start rows and convert the temp lists to strings
+        df_lookup = df_lookup[self.fil_starts]
+        df_lookup["vars_internal"] = \
+            df_lookup["vars_internal"].apply(lambda lst: ",\n".join(map(str, lst)))
+        
+        self.df_lookup = df_lookup[["vars_internal"]]
+
+    def parse_dim_statement(self, s):
+        """
+        Helper function to parse VBA Dim statement into a list of strings
+        for each variable declared in the Dim statement
+
+        JDL 8/4/23
+        """
+        
+        #Pattern match on string without "Dim " prefix aka [4:] slice
+        dim_match = re.findall(self.dim_pattern, s[4:])
+        
+        #Build list of parsed strings for each variable
+        lst_parsed_vars = []
+        for match in dim_match:
+            
+            #If match[1] populated, New descriptor is present
+            lst_parsed = [match[0], match[2]]
+            if len(match[1]) > 0: lst_parsed.append("New")
+            s_parsed = "|".join(lst_parsed)
+            
+            #Append variable's parsed string to the list
+            lst_parsed_vars.append(s_parsed)
+        return lst_parsed_vars
+
+    def add_plan_internal_vars_col(self):
+        """
+        Merge internal_vars column from df_lookup into df_plan
+
+        JDL 8/4/23
+        """
+        self.df_plan = self.df_plan.merge(self.df_lookup[["vars_internal"]], 
+                                          left_on="idx_start", right_index=True)
+
+
