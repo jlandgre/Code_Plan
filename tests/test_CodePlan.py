@@ -42,6 +42,29 @@ def sep():
     #line break separator for df_plan values
     return ",\n"
 
+def test_create_docstring_df(cls1):
+    """
+    Locate docstring rows between function/sub start rows and previous
+    function/sub end row
+    
+    JDL 8/3/23
+    """
+    cls1.read_vba_code_file()
+    cls1.init_df_code()
+    cls1.combine_split_lines()
+    cls1.set_filters()
+    cls1.parse_start_lines()
+    cls1.create_df_plan_args_col()
+    cls1.create_docstring_df()
+
+    cls1.add_plan_docstring_col()
+    print("\n\n", cls1.df_plan, "\n\n")
+
+    cls1.df_plan.to_excel("df_plan.xlsx", index=False)
+
+    #xxx stop 8/3/23 22:15 - need separate test for add_plan_docstring_col
+
+
 def test_create_df_plan_args_col(cls1, sep):
     """
     Create the arg column in df_plan by parsing the args_temp column
@@ -63,9 +86,6 @@ def test_create_df_plan_args_col(cls1, sep):
                     "j|Integer|ByRef" + sep + "arg2|Variant|ByRef"]
     for idx, s in enumerate(cls1.df_plan["arguments"]):
         assert s == lst_expected[idx]
-
-    output_file = "df_plan.xlsx"
-    cls1.df_plan.to_excel(output_file, index=False)
     
 
 def test_parse_arglist(cls1, sep):
@@ -115,17 +135,17 @@ def test_parse_start_lines(cls1):
     assert cls1.df_plan.loc[0,"routine_name"] == "ExampleProcedure"
     assert cls1.df_plan.loc[0,"type"] == "Boolean"
     assert cls1.df_plan.loc[0,"args_temp"] == "cls, ByVal arg1, Optional arg2"
-    assert cls1.df_plan.loc[0,"line_num_start"] == 11
+    assert cls1.df_plan.loc[0,"idx_start"] == 10
 
     assert cls1.df_plan.loc[1,"routine_name"] == "Method1"
     assert cls1.df_plan.loc[1,"type"] == "Boolean"
     assert cls1.df_plan.loc[1,"args_temp"] == "cls, arg1"
-    assert cls1.df_plan.loc[1,"line_num_start"] == 31
+    assert cls1.df_plan.loc[1,"idx_start"] == 30
 
     assert cls1.df_plan.loc[2,"routine_name"] == "Method2"
     assert cls1.df_plan.loc[2,"type"] == "Variant"
     assert cls1.df_plan.loc[2,"args_temp"] == "cls, i As Integer, j As Integer, arg2"
-    assert cls1.df_plan.loc[2,"line_num_start"] == 45
+    assert cls1.df_plan.loc[2,"idx_start"] == 44
 
 def test_parse_startline(cls1):
     """
