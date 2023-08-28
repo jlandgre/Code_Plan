@@ -1,4 +1,4 @@
-#Version 8/4/23
+#Version 8/28/23
 import pandas as pd
 import re
 #2345678901234567890123456789012345678901234567890123456789012345678901234567890
@@ -36,6 +36,7 @@ class VBAToCodePlan:
         self.init_df_code()
         self.combine_split_lines()
         self.set_filters()
+        self.drop_public_private()
         self.parse_start_lines()
         self.create_df_plan_args_col()
         self.create_docstrings_df()
@@ -100,18 +101,29 @@ class VBAToCodePlan:
         """
         Set filters for function starts and ends
 
-        JDL 8/1/2023
+        JDL 8/1/2023    Modified 8/28/23 switch to using regex for starts and ends
         """
-        #First and last lines in function or sub
+        #Set filters for first and last lines in functions and subs
         col = "stripped_code"
-        self.fil_starts = self.df_code[col].str.startswith("Function")
-        self.fil_starts = self.fil_starts | self.df_code[col].str.startswith("Sub")
-        self.fil_ends = self.df_code[col].str.startswith("End Function")
-        self.fil_ends = self.fil_ends | self.df_code[col].str.startswith("End Sub")
-        
+        re_starts = r"^(Public|Private)?\s*(Sub|Function)\s+"
+        self.fil_starts = self.df_code[col].str.match(re_starts)
+        re_ends = r"^(Public|Private)?\s*End (Sub|Function)\s+"
+        self.fil_ends = self.df_code[col].str.match(re_ends)
+
         # Comment fence boundaries and rows with VBA dim statements
         self.fil_bounds = self.df_code[col].str.startswith("\'------")
         self.fil_dims = self.df_code[col].str.startswith("Dim ")
+
+    def drop_public_private(self):
+        """
+        Strip leading "Public " or "Private " from function/sub names
+
+        JDL 8/28/2023
+        """
+        col = "stripped_code"
+        re_strip = r"^(Public|Private)\s+"
+        subset = self.df_code.loc[self.fil_starts, col]
+        self.df_code.loc[self.fil_starts, col] = subset.str.replace(re_strip, "", regex=True)
 
     def parse_start_lines(self):
         """
@@ -199,7 +211,6 @@ class VBAToCodePlan:
     
         for arg in arglist.split(", "):
             parsed_arg, has_type = ParseArg(arg)
-            #print("\n", parsed_arg, has_type)
             
             #Set defaults
             IsOptional, arg_by = False, "ByRef"
@@ -220,7 +231,6 @@ class VBAToCodePlan:
             if has_type: arg_type = parsed_arg[-1]
             arg_code_plan = "|".join([arg_name, arg_type, arg_by])
             if IsOptional: arg_code_plan = arg_code_plan + "|Optional"
-            #print(arg_code_plan)
             
             lst_arg_code_plan.append(arg_code_plan)
         return ",\n".join(lst_arg_code_plan)
@@ -298,12 +308,16 @@ class VBAToCodePlan:
         #Populate rows with index of their function/sub's first line
         df_lookup.loc[self.fil_starts, "idx_start"] = \
                 df_lookup[self.fil_starts].index.values
-        df_lookup["idx_start"].ffill(inplace=True)
         
+        df_lookup["idx_start"].ffill(inplace=True)
+
         #Initialize column for internal variable strings
         df_lookup["vars_internal"] = [[] for _ in range(len(df_lookup))]
         
-        # Parse VBA Dim statements
+        # Parse VBA Dim statements - omit df_lookup rows prior to first Function or Sub (NaN idx_start)
+        #fil_internal_rows = ~df_lookup["idx_start"].isnull() | self.fil_dims
+
+        #for idx in df_lookup[fil_internal_rows].index:
         for idx in df_lookup[self.fil_dims].index:
             idx_start = int(df_lookup.loc[idx, "idx_start"])
             lst_parsed_dims = self.parse_dim_statement(df_lookup.loc[idx, "stripped_code"])

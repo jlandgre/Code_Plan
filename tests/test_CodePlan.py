@@ -178,7 +178,6 @@ def test_create_df_plan_args_col(cls1, sep):
     for idx, s in enumerate(cls1.df_plan["arguments"]):
         assert s == lst_expected[idx]
     
-
 def test_parse_arglist(cls1, sep):
     """
     Parse a VBA arglist string (read from df_plan args_temp row/column
